@@ -22,6 +22,7 @@ class Sample:
     true_total_copies: int
     counts: np.ndarray
     metadata: Dict[str, Any]
+    false_positive_rate: float
 
 
 def _lognormal_sigma_from_cv(cv: float) -> float:
@@ -125,6 +126,17 @@ class DropletDigitalPCRSimulator:
             binomial_k=config.simulation.distributions.binomial_k,
         )
 
+    def sample_false_positive_rate(self, rng: Optional[np.random.Generator] = None) -> float:
+        rng = rng or self.rng
+        lo, hi = self.config.simulation.false_positive_rate_range
+        lo = float(np.clip(lo, 0.0, 1.0))
+        hi = float(np.clip(hi, 0.0, 1.0))
+        if hi < lo:
+            lo, hi = hi, lo
+        if abs(hi - lo) < 1e-12:
+            return lo
+        return float(rng.uniform(lo, hi))
+
     def sample_true_total_copies(self, rng: Optional[np.random.Generator] = None) -> int:
         rng = rng or self.rng
         lo, hi = self.config.simulation.true_copy_range
@@ -184,6 +196,7 @@ class DropletDigitalPCRSimulator:
         distribution_name: Optional[str] = None,
         cv: Optional[float] = None,
         simulation_mode: Optional[str] = None,
+        false_positive_rate: Optional[float] = None,
         rng: Optional[np.random.Generator] = None,
     ) -> Sample:
         rng = rng or self.rng
@@ -196,7 +209,13 @@ class DropletDigitalPCRSimulator:
             counts = self.allocate_counts_poisson(n_true, f, rng)
         else:
             raise ValueError(f"Unsupported simulation mode: {sim_mode}")
+        fp_rate = self.sample_false_positive_rate(rng) if false_positive_rate is None else float(false_positive_rate)
+        fp_rate = float(np.clip(fp_rate, 0.0, 1.0))
         labels = (counts > 0).astype(np.float32)
+        if fp_rate > 0:
+            negative_mask = counts == 0
+            false_positives = rng.random(len(counts)) < fp_rate
+            labels = np.where(negative_mask & false_positives, 1.0, labels).astype(np.float32)
         metadata = {
             "n_droplets": int(len(f)),
             "distribution_name": distribution_name or self.config.simulation.distributions.name,
@@ -204,6 +223,7 @@ class DropletDigitalPCRSimulator:
             "positive_ratio": float(labels.mean()),
             "saturation_ratio": float(labels.mean()),
             "simulation_mode": sim_mode,
+            "false_positive_rate": fp_rate,
         }
         return Sample(
             volume_fractions=f.astype(np.float32),
@@ -211,6 +231,7 @@ class DropletDigitalPCRSimulator:
             true_total_copies=n_true,
             counts=counts.astype(np.int64),
             metadata=metadata,
+            false_positive_rate=fp_rate,
         )
 
 
@@ -220,6 +241,7 @@ def sample_to_tensor_dict(sample: Sample) -> Dict[str, Any]:
         "labels": torch.tensor(sample.labels, dtype=torch.float32),
         "true_total_copies": torch.tensor(sample.true_total_copies, dtype=torch.float32),
         "counts": torch.tensor(sample.counts, dtype=torch.int64),
+        "false_positive_rate": torch.tensor(sample.false_positive_rate, dtype=torch.float32),
         "mask": torch.ones_like(torch.tensor(sample.labels, dtype=torch.float32), dtype=torch.bool),
         "metadata": sample.metadata,
     }
@@ -243,8 +265,11 @@ class OnlineSimulationDataset(IterableDataset):
         self.seed_offset = seed_offset
 
     def __iter__(self):
+        if not hasattr(self, "_epoch_counter"):
+            self._epoch_counter = 0
+        self._epoch_counter += 1
         worker = torch.utils.data.get_worker_info()
-        worker_seed = self.simulator.config.simulation.random_seed + self.seed_offset
+        worker_seed = self.simulator.config.simulation.random_seed + self.seed_offset + self._epoch_counter * 1_000_003
         if worker is not None:
             worker_seed += worker.id
         rng = np.random.default_rng(worker_seed)
@@ -306,6 +331,7 @@ def collate_samples(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     mask = torch.zeros(bsz, max_len, dtype=torch.bool)
     counts = torch.zeros(bsz, max_len, dtype=torch.int64)
     true_total_copies = torch.zeros(bsz, dtype=torch.float32)
+    false_positive_rate = torch.zeros(bsz, dtype=torch.float32)
     metadata: List[Dict[str, Any]] = []
     for i, item in enumerate(batch):
         n = item["volume_fractions"].shape[0]
@@ -314,6 +340,7 @@ def collate_samples(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         counts[i, :n] = item["counts"]
         mask[i, :n] = item.get("mask", torch.ones(n, dtype=torch.bool))
         true_total_copies[i] = item["true_total_copies"]
+        false_positive_rate[i] = item["false_positive_rate"]
         metadata.append(item["metadata"])
     return {
         "volume_fractions": volume_fractions,
@@ -321,5 +348,6 @@ def collate_samples(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         "counts": counts,
         "mask": mask,
         "true_total_copies": true_total_copies,
+        "false_positive_rate": false_positive_rate,
         "metadata": metadata,
     }
