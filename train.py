@@ -54,6 +54,7 @@ def evaluate_loss(model: nn.Module, loader: DataLoader, device: torch.device, co
         outputs = model(
             batch["volume_fractions"].to(device),
             batch["labels"].to(device),
+            batch["false_positive_rate"].to(device),
             batch["mask"].to(device),
         )
         loss = compute_loss(outputs, batch["true_total_copies"].to(device), config)
@@ -93,7 +94,11 @@ def train(config: ExperimentConfig) -> Path:
 
     model = build_model(config).to(device)
     optimizer = AdamW(model.parameters(), lr=config.training.learning_rate, weight_decay=config.training.weight_decay)
-    scheduler = CosineAnnealingLR(optimizer, T_max=max(config.training.epochs, 1))
+    scheduler = CosineAnnealingLR(
+        optimizer,
+        T_max=max(config.training.epochs, 1),
+        eta_min=config.training.min_learning_rate,
+    )
     scaler = torch.amp.GradScaler(enabled=config.training.amp and device.type == "cuda")
 
     best_val = float("inf")
@@ -110,6 +115,7 @@ def train(config: ExperimentConfig) -> Path:
                 outputs = model(
                     batch["volume_fractions"].to(device),
                     batch["labels"].to(device),
+                    batch["false_positive_rate"].to(device),
                     batch["mask"].to(device),
                 )
                 loss = compute_loss(outputs, batch["true_total_copies"].to(device), config)
