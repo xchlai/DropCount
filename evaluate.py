@@ -32,7 +32,6 @@ def collect_model_predictions(
         outputs = model(
             batch["volume_fractions"].to(device),
             batch["labels"].to(device),
-            batch["false_positive_rate"].to(device),
             batch["mask"].to(device),
         )
         pred_copies = to_numpy(outputs["pred_copies"])
@@ -56,7 +55,6 @@ def collect_model_predictions(
                     "cv": float(meta["cv"]),
                     "n_droplets": int(meta["n_droplets"]),
                     "positive_ratio": float(meta["positive_ratio"]),
-                    "false_positive_rate": float(meta["false_positive_rate"]),
                     "is_saturated": bool(meta["positive_ratio"] >= 0.99),
                     "naive_saturation": bool(naive.saturation),
                     "mle_saturation": bool(mle.saturation),

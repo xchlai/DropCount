@@ -36,7 +36,6 @@ class SimulationConfig:
     simulation_mode: str = "fixed_total_multinomial"
     distributions: DistributionConfig = field(default_factory=DistributionConfig)
     random_seed: int = 123
-    false_positive_rate_range: List[float] = field(default_factory=lambda: [0.0, 0.0])
     train_samples_per_epoch: int = 1024
     val_samples: int = 256
     test_samples_per_combo: int = 64
