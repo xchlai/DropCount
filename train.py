@@ -54,6 +54,7 @@ def evaluate_loss(model: nn.Module, loader: DataLoader, device: torch.device, co
         outputs = model(
             batch["volume_fractions"].to(device),
             batch["labels"].to(device),
+            batch["false_positive_rate"].to(device),
             batch["mask"].to(device),
         )
         loss = compute_loss(outputs, batch["true_total_copies"].to(device), config)
@@ -110,6 +111,7 @@ def train(config: ExperimentConfig) -> Path:
                 outputs = model(
                     batch["volume_fractions"].to(device),
                     batch["labels"].to(device),
+                    batch["false_positive_rate"].to(device),
                     batch["mask"].to(device),
                 )
                 loss = compute_loss(outputs, batch["true_total_copies"].to(device), config)

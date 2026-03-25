@@ -78,14 +78,20 @@ class DropletFeatureEncoder(nn.Module):
     def __init__(self, hidden_dim: int, fourier_features: int = 2) -> None:
         super().__init__()
         self.fourier_features = fourier_features
-        base_dim = 6 + 2 * fourier_features
+        base_dim = 7 + 2 * fourier_features
         self.proj = nn.Sequential(
             nn.Linear(base_dim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
         )
 
-    def forward(self, volume_fractions: torch.Tensor, labels: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        volume_fractions: torch.Tensor,
+        labels: torch.Tensor,
+        false_positive_rate: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         eps = 1e-8
         f = volume_fractions.clamp_min(eps)
         y = labels
@@ -94,7 +100,8 @@ class DropletFeatureEncoder(nn.Module):
         mean_f = masked_mean(f.unsqueeze(-1), mask, dim=1).squeeze(-1)
         std_f = masked_std(f.unsqueeze(-1), mask, dim=1).squeeze(-1)
         standardized = (f - mean_f.unsqueeze(1)) / std_f.unsqueeze(1).clamp_min(eps)
-        feats = [f, log_f, y, f * y, sqrt_f, standardized]
+        fp = false_positive_rate.unsqueeze(1).expand_as(f)
+        feats = [f, log_f, y, f * y, sqrt_f, standardized, fp]
         for k in range(self.fourier_features):
             freq = (2.0**k) * math.pi
             feats.append(torch.sin(freq * f))
@@ -135,9 +142,10 @@ class VolumeAwareSetTransformerRegressor(nn.Module):
         self,
         volume_fractions: torch.Tensor,
         labels: torch.Tensor,
+        false_positive_rate: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
-        tokens = self.encoder(volume_fractions, labels, mask)
+        tokens = self.encoder(volume_fractions, labels, false_positive_rate, mask)
         tokens = self.input_proj(tokens)
         batch_size = tokens.size(0)
         latents = self.latents.unsqueeze(0).expand(batch_size, -1, -1)
